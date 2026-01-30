@@ -65,7 +65,6 @@ class HospitalSystem:
                 'asa_score': row['ASA_Score'],
                 'needs_c_arm': row.get('Needs_CArm', False),
                 'needs_robot': row.get('Needs_Robot', False)
-                # ready_time not set = defaults to DAY_START (no extra constraint)
             }
             patients_payload.append(p_obj)
             
@@ -75,83 +74,25 @@ class HospitalSystem:
         self.current_schedule = self.scheduler.solve(self.active_patients)
         return self.current_schedule
 
-    def handle_start_delay(self, patient_id, delay_mins, current_time_str):
-        """
-        Handles delayed START time (surgeon/patient is late).
-        This is different from duration change - the surgery hasn't started yet.
-        
-        delay_mins: Minutes to ADD to scheduled start (positive = late, negative = early)
-        """
-        print(f"⏰ Start Delay: {patient_id} start adjusted by {'+' if delay_mins > 0 else ''}{delay_mins} mins")
-        
-        h, m = map(int, current_time_str.split(':'))
-        current_mins = h * 60 + m
-        
-        target_p = next((p for p in self.active_patients if p['id'] == patient_id), None)
-        
-        if target_p:
-            # Get the originally scheduled start time
-            scheduled_start = 8 * 60  # Default 8 AM
-            if self.current_schedule is not None:
-                row = self.current_schedule[self.current_schedule['Patient ID'] == patient_id]
-                if not row.empty:
-                    scheduled_start = row.iloc[0]['start_mins']
-            
-            # New ready time = scheduled start + delay (but not before current time for positive delays)
-            if delay_mins >= 0:
-                new_ready_time = max(scheduled_start + delay_mins, current_mins)
-            else:
-                # For early arrivals, allow earlier start but not before current time
-                new_ready_time = max(scheduled_start + delay_mins, current_mins)
-            
-            target_p['ready_time'] = new_ready_time
-            print(f"   New ready time: {new_ready_time//60:02d}:{new_ready_time%60:02d}")
-        
-        # Re-optimize: Unpin this patient, pin others appropriately
-        return self._recalculate_schedule(current_mins, unpin_patient=patient_id)
-
     def handle_emergency(self, patient_id, added_delay, current_time_hhmm):
-        """
-        Handles DURATION change (surgery taking longer/shorter than expected).
-        Re-optimizes schedule while pinning past events.
-        
-        added_delay: Can be negative (finished early) or positive (taking longer)
-        """
-        if added_delay != 0:
-            print(f"⏱️ Duration Change: {patient_id} {'+' if added_delay > 0 else ''}{added_delay} mins")
+        """Re-optimizes schedule while pinning past events"""
+        print(f"🚨 Handling Delay: {patient_id} +{added_delay} mins")
         
         # Convert HH:MM to minutes
         h, m = map(int, current_time_hhmm.split(':'))
         current_mins = h * 60 + m
         
-        # 1. Update Duration (ensure minimum 30 mins)
+        # 1. Update Duration
         target_p = next((p for p in self.active_patients if p['id'] == patient_id), None)
         if target_p:
-            target_p['duration'] = max(30, target_p['duration'] + added_delay)
+            target_p['duration'] += added_delay
             
-        # 2. Recalculate with pinning
-        return self._recalculate_schedule(current_mins)
-
-    def _recalculate_schedule(self, current_mins, unpin_patient=None):
-        """
-        Recalculates schedule, pinning past surgeries but allowing future ones to move.
-        unpin_patient: If set, this patient won't be pinned even if in the past.
-        """
+        # 2. Pin Logic
         if self.current_schedule is not None:
             for p in self.active_patients:
-                pid = p['id']
-                
-                # Skip pinning for the specified patient (they're being rescheduled)
-                if pid == unpin_patient:
-                    p.pop('fixed_start', None)
-                    p.pop('fixed_room', None)
-                    # ready_time already set by the calling function
-                    continue
-                
                 # Find scheduled start time
-                sched_row = self.current_schedule[self.current_schedule['Patient ID'] == pid]
-                if sched_row.empty:
-                    continue
+                sched_row = self.current_schedule[self.current_schedule['Patient ID'] == p['id']]
+                if sched_row.empty: continue
                 
                 start_mins = sched_row.iloc[0]['start_mins']
                 assigned_room = sched_row.iloc[0]['Room']
@@ -165,7 +106,57 @@ class HospitalSystem:
                     p.pop('fixed_start', None)
                     p.pop('fixed_room', None)
                     p['min_start_time'] = current_mins
+
+        # 3. Re-Solve
+        self.current_schedule = self.scheduler.solve(self.active_patients)
+        return self.current_schedule
+
+    def handle_start_delay(self, patient_id, delay_reason, new_ready_time_str, current_time_str):
+        """
+        Handles situations where a surgery cannot start on time due to:
+        - Surgeon running late
+        - Patient not ready (labs, consent, etc.)
+        - Equipment/room delay
         
+        Sets a 'ready_time' for the patient so solver won't schedule before that.
+        """
+        print(f"⏰ Start Delay: {patient_id} cannot start until {new_ready_time_str} (Reason: {delay_reason})")
+        
+        # Convert times to minutes
+        h, m = map(int, current_time_str.split(':'))
+        current_mins = h * 60 + m
+        
+        rh, rm = map(int, new_ready_time_str.split(':'))
+        ready_mins = rh * 60 + rm
+        
+        # Find the target patient
+        target_p = next((p for p in self.active_patients if p['id'] == patient_id), None)
+        if target_p:
+            # Set ready_time - solver will ensure start >= ready_time
+            target_p['ready_time'] = ready_mins
+        
+        # Pin past surgeries and set min_start_time for future ones
+        if self.current_schedule is not None:
+            for p in self.active_patients:
+                sched_row = self.current_schedule[self.current_schedule['Patient ID'] == p['id']]
+                if sched_row.empty: continue
+                
+                start_mins = sched_row.iloc[0]['start_mins']
+                assigned_room = sched_row.iloc[0]['Room']
+                
+                if start_mins < current_mins:
+                    # Already started - pin it
+                    p['fixed_start'] = start_mins
+                    p['fixed_room'] = assigned_room
+                else:
+                    # Future surgery - free to move
+                    p.pop('fixed_start', None)
+                    p.pop('fixed_room', None)
+                    # Only set min_start_time if not already set to a later time by ready_time
+                    if 'ready_time' not in p or p.get('ready_time', 0) < current_mins:
+                        p['min_start_time'] = current_mins
+        
+        # Re-solve with new constraints
         self.current_schedule = self.scheduler.solve(self.active_patients)
         return self.current_schedule
 

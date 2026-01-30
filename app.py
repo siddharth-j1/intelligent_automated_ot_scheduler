@@ -145,147 +145,150 @@ if data_source == "Manual Entry" and st.session_state['manual_patients']:
 st.sidebar.divider()
 st.sidebar.subheader("2. Live Operations")
 
-if st.session_state['schedule'] is not None:
-    # Create tabs for different operations
-    tab_start, tab_duration, tab_emergency = st.sidebar.tabs(["⏰ Start Delay", "⏱️ Duration", "🚨 Code Red"])
+# Emergency Type Toggle
+emergency_mode = st.sidebar.radio(
+    "Emergency Type:",
+    ["Start Delay", "Duration Adjustment", "Code Red"],
+    help="Start Delay: Surgeon/patient running late\nDuration Adjustment: Surgery taking longer/shorter\nCode Red: Emergency direct booking"
+)
+
+if emergency_mode == "Start Delay":
+    # --- NEW: START DELAY HANDLING ---
+    st.sidebar.markdown("⏰ **Surgery Start Delayed**")
+    st.sidebar.caption("Use when surgeon/patient is late or equipment not ready")
     
-    patient_list = st.session_state['schedule']['Patient ID'].tolist()
-    
-    # TAB 1: START DELAY (Surgeon/Patient Late)
-    with tab_start:
-        st.markdown("**Surgeon/Patient Running Late?**")
-        st.caption("Delays the START time of a surgery that hasn't begun yet.")
+    if st.session_state['schedule'] is not None:
+        patient_list = st.session_state['schedule']['Patient ID'].tolist()
         
         if patient_list:
-            target_start = st.selectbox("Select Patient", patient_list, key="start_delay_patient")
+            delay_patient = st.sidebar.selectbox("Select Delayed Patient", patient_list, key="start_delay_patient")
             
-            start_delay_mins = st.slider(
-                "Start Time Adjustment (Mins)", 
-                min_value=-60, 
-                max_value=180, 
-                value=0, 
-                step=15,
-                key="start_delay_slider",
-                help="Positive = Late arrival | Negative = Early arrival"
+            delay_reason = st.sidebar.selectbox(
+                "Reason for Delay",
+                ["Surgeon Running Late", "Patient Not Ready", "Equipment Issue", "Room Cleaning", "Other"],
+                key="start_delay_reason"
             )
             
-            current_time_start = st.time_input("Current Time", value=None, key="start_delay_time")
+            new_ready_time = st.sidebar.time_input("Patient Will Be Ready At", value=None, key="start_delay_ready")
+            current_time_sd = st.sidebar.time_input("Current Time", value=None, key="start_delay_current")
             
-            if st.button("⏰ Apply Start Delay", key="apply_start_delay"):
-                if current_time_start is None:
-                    st.error("Please set Current Time.")
+            if st.sidebar.button("⏰ Apply Start Delay"):
+                if new_ready_time is None or current_time_sd is None:
+                    st.sidebar.error("Please set both Ready Time and Current Time.")
                 else:
-                    time_str = f"{current_time_start.hour}:{current_time_start.minute}"
+                    ready_str = f"{new_ready_time.hour:02d}:{new_ready_time.minute:02d}"
+                    current_str = f"{current_time_sd.hour:02d}:{current_time_sd.minute:02d}"
                     
-                    if start_delay_mins > 0:
-                        spinner_msg = f"⏰ Surgeon/Patient {start_delay_mins} mins late..."
-                        success_msg = f"✅ {target_start} start pushed by {start_delay_mins} mins."
-                    elif start_delay_mins < 0:
-                        spinner_msg = f"⏰ Patient arrived {abs(start_delay_mins)} mins early..."
-                        success_msg = f"✅ {target_start} can start up to {abs(start_delay_mins)} mins earlier!"
-                    else:
-                        spinner_msg = "Refreshing schedule..."
-                        success_msg = "✅ Schedule refreshed."
-                    
-                    with st.spinner(spinner_msg):
-                        new_sched = st.session_state['system'].handle_start_delay(target_start, start_delay_mins, time_str)
+                    with st.spinner(f"⏰ {delay_patient} delayed due to {delay_reason}. Re-optimizing..."):
+                        new_sched = st.session_state['system'].handle_start_delay(
+                            delay_patient, delay_reason, ready_str, current_str
+                        )
                         st.session_state['schedule'] = new_sched
                     
-                    st.success(success_msg)
+                    st.sidebar.warning(f"✅ {delay_patient} rescheduled to start at {ready_str}. Downstream adjusted.")
         else:
-            st.info("No patients scheduled.")
+            st.sidebar.info("Schedule is empty.")
+    else:
+        st.sidebar.info("Please generate a schedule first.")
+
+elif emergency_mode == "Code Red":
+    # --- NEW: EMERGENCY CODE RED FORM ---
+    st.sidebar.markdown("🚨 **Emergency Patient Direct Booking**")
     
-    # TAB 2: DURATION CHANGE (Surgery taking longer/shorter)
-    with tab_duration:
-        st.markdown("**Surgery Ending Early/Late?**")
-        st.caption("Adjusts the DURATION of an ongoing surgery.")
+    with st.sidebar.expander("Emergency Patient Details", expanded=True):
+        with st.form("emergency_form", clear_on_submit=False):
+            em_id = st.text_input("Patient ID (e.g., EMG-001)", value="EMG-001")
+            em_age = st.number_input("Age", min_value=0, max_value=120, value=45)
+            em_gender = st.selectbox("Gender", GENDER_TYPES)
+            em_bmi = st.number_input("BMI", min_value=10.0, max_value=60.0, value=25.0)
+            em_surgery = st.selectbox("Surgery Type", SURGERY_TYPES)
+            em_anesthesia = st.selectbox("Anesthesia Type", ANESTHESIA_TYPES)
+            em_comorbidity = st.selectbox("Has Comorbidity", COMORBIDITY_OPTS)
+            em_asa = st.selectbox("ASA Score", [3, 4, 5], index=0)  # Emergencies are high risk
+            em_time = st.time_input("Arrival Time", value=None)
+            
+            submit_emergency = st.form_submit_button("🚨 ACTIVATE CODE RED")
+    
+    if submit_emergency:
+        if em_time is None:
+            st.sidebar.error("Please set the Arrival Time.")
+        else:
+            time_str = f"{em_time.hour:02d}:{em_time.minute:02d}"
+            
+            # Prepare patient details for AI prediction
+            emergency_patient = {
+                'id': em_id,
+                'Age': em_age,
+                'Gender': em_gender,
+                'BMI': em_bmi,
+                'SurgeryType': em_surgery,
+                'AnesthesiaType': em_anesthesia,
+                'Has_Comorbidity': em_comorbidity,
+                'ASA_Score': em_asa
+            }
+            
+            with st.spinner("🚨 Activating Emergency Protocol..."):
+                new_schedule = st.session_state['system'].handle_code_red(emergency_patient, time_str)
+                st.session_state['schedule'] = new_schedule
+            
+            st.sidebar.success(f"✅ Emergency {em_id} booked in OR-11 (Emerg) at {time_str}!")
+
+elif emergency_mode == "Duration Adjustment":
+    # --- EXISTING: DELAY HANDLING ---
+    st.sidebar.markdown("⚠️ **Surgery Duration Adjustment**")
+    st.sidebar.caption("Handles both early finishes (−) and delays (+)")
+    
+    if st.session_state['schedule'] is not None:
+        # Dropdowns for Emergency
+        patient_list = st.session_state['schedule']['Patient ID'].tolist()
         
         if patient_list:
-            target_dur = st.selectbox("Select Patient", patient_list, key="duration_patient")
+            target_p = st.sidebar.selectbox("Select Patient", patient_list)
             
-            duration_change = st.slider(
-                "Duration Adjustment (Mins)", 
+            # Allow negative values for early finishes
+            delay_mins = st.sidebar.slider(
+                "Time Adjustment (Minutes)", 
                 min_value=-180, 
                 max_value=180, 
                 value=0, 
                 step=15,
-                key="duration_slider",
-                help="Negative = Finished early | Positive = Taking longer"
+                help="Negative = Surgery finished early | Positive = Surgery delayed"
             )
             
-            current_time_dur = st.time_input("Current Time", value=None, key="duration_time")
+            current_time = st.sidebar.time_input("Current Time", value=None)
             
-            if st.button("⏱️ Update Duration", key="apply_duration"):
-                if current_time_dur is None:
-                    st.error("Please set Current Time.")
+            if st.sidebar.button("⚡ Adjust & Re-Optimize Schedule"):
+                if current_time is None:
+                    st.sidebar.error("Please set the Current Time.")
                 else:
-                    time_str = f"{current_time_dur.hour}:{current_time_dur.minute}"
+                    time_str = f"{current_time.hour}:{current_time.minute}"
                     
-                    if duration_change < 0:
-                        spinner_msg = f"⚡ Surgery finished {abs(duration_change)} mins early!"
-                        success_msg = f"✅ {target_dur} finished early - patients moved up."
-                    elif duration_change > 0:
-                        spinner_msg = f"⚡ Surgery extended by {duration_change} mins..."
-                        success_msg = f"⚠️ {target_dur} extended by {duration_change} mins."
+                    # Dynamic messaging based on early/late
+                    if delay_mins < 0:
+                        spinner_msg = f"⚡ Surgery finished {abs(delay_mins)} mins early! Re-optimizing to move up waiting patients..."
+                        success_msg = f"✅ Schedule updated! {target_p} finished {abs(delay_mins)} mins early - downstream patients moved up."
+                    elif delay_mins > 0:
+                        spinner_msg = f"⚡ Surgery delayed {delay_mins} mins. Re-calculating cascade effects..."
+                        success_msg = f"⚠️ Schedule healed! {target_p} extended by {delay_mins} mins."
                     else:
-                        spinner_msg = "Refreshing schedule..."
-                        success_msg = "✅ Schedule refreshed."
+                        spinner_msg = "⚡ Re-optimizing schedule..."
+                        success_msg = "✅ Schedule refreshed (no time change)."
                     
                     with st.spinner(spinner_msg):
-                        new_sched = st.session_state['system'].handle_emergency(target_dur, duration_change, time_str)
+                        new_sched = st.session_state['system'].handle_emergency(target_p, delay_mins, time_str)
                         st.session_state['schedule'] = new_sched
                     
-                    if duration_change <= 0:
-                        st.success(success_msg)
+                    if delay_mins < 0:
+                        st.sidebar.success(success_msg)
+                    elif delay_mins > 0:
+                        st.sidebar.warning(success_msg)
                     else:
-                        st.warning(success_msg)
+                        st.sidebar.info(success_msg)
         else:
-            st.info("No patients scheduled.")
-    
-    # TAB 3: CODE RED (Emergency Admission)
-    with tab_emergency:
-        st.markdown("🚨 **Emergency Admission**")
-        st.caption("Direct booking into OR-11 (Emergency)")
-        
-        with st.form("emergency_form", clear_on_submit=False):
-            em_id = st.text_input("Patient ID", value="EMG-001")
-            em_age = st.number_input("Age", min_value=0, max_value=120, value=45)
-            em_gender = st.selectbox("Gender", GENDER_TYPES, key="em_gender")
-            em_bmi = st.number_input("BMI", min_value=10.0, max_value=60.0, value=25.0)
-            em_surgery = st.selectbox("Surgery Type", SURGERY_TYPES, key="em_surgery")
-            em_anesthesia = st.selectbox("Anesthesia", ANESTHESIA_TYPES, key="em_anesthesia")
-            em_comorbidity = st.selectbox("Comorbidity", COMORBIDITY_OPTS, key="em_comorb")
-            em_asa = st.selectbox("ASA Score", [3, 4, 5], index=0, key="em_asa")
-            em_time = st.time_input("Arrival Time", value=None, key="em_time")
-            
-            submit_emergency = st.form_submit_button("🚨 ACTIVATE CODE RED")
-        
-        if submit_emergency:
-            if em_time is None:
-                st.error("Please set Arrival Time.")
-            else:
-                time_str = f"{em_time.hour:02d}:{em_time.minute:02d}"
-                
-                emergency_patient = {
-                    'id': em_id,
-                    'Age': em_age,
-                    'Gender': em_gender,
-                    'BMI': em_bmi,
-                    'SurgeryType': em_surgery,
-                    'AnesthesiaType': em_anesthesia,
-                    'Has_Comorbidity': em_comorbidity,
-                    'ASA_Score': em_asa
-                }
-                
-                with st.spinner("🚨 Activating Emergency Protocol..."):
-                    new_schedule = st.session_state['system'].handle_code_red(emergency_patient, time_str)
-                    st.session_state['schedule'] = new_schedule
-                
-                st.success(f"✅ {em_id} booked in OR-11 at {time_str}!")
-
-else:
-    st.sidebar.info("📋 Generate a schedule first to access Live Operations.")
-
+            st.sidebar.info("Schedule is empty.")
+    else:
+        st.sidebar.info("Please generate a schedule first.")
+ 
 # ==========================================
 # MAIN DASHBOARD VISUALIZATION
 # ==========================================

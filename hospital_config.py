@@ -66,3 +66,23 @@ EMERGENCY_RESERVE_SURGEONS = {
     'Cosmetic': 'Dr. Avery',         # Reserve cosmetic surgeon
     'Urology': 'Dr. Grey'            # Reserve urology surgeon
 }
+
+# hospital_config.py
+
+# ... existing code ...
+
+# --- EMERGENCY RESERVES ---
+# These resources are EXCLUDED from the morning schedule
+EMERGENCY_RESERVE_ROOM = {
+    'id': 999, 
+    'name': 'Trauma-Bay-1', 
+    'supported': ['Cardiology', 'Neurology', 'Orthopedics', 'General'] # Supports everything
+}
+
+# One doctor per specialty who is "On Call" waiting for emergencies
+EMERGENCY_RESERVE_SURGEONS = {
+    'Cardiology': 'Dr. Reserve (Cardio)',
+    'Neurology': 'Dr. Reserve (Neuro)',
+    'Orthopedics': 'Dr. Reserve (Ortho)',
+    'General': 'Dr. Reserve (Gen)',
+}
