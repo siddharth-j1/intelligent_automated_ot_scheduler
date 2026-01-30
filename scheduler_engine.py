@@ -35,11 +35,17 @@ class EnterpriseScheduler:
             start_var = self.model.NewIntVar(CONSTANTS['DAY_START'], horizon, f'start_{pid}')
             end_var = self.model.NewIntVar(CONSTANTS['DAY_START'], horizon, f'end_{pid}')
             
-            # Master Interval (Used for Surgeon/Equip)
+            # Master Interval (Used for Equipment only now)
             master_interval = self.model.NewIntervalVar(start_var, dur, end_var, f'task_{pid}')
             
             starts[pid] = start_var
             ends[pid] = end_var
+            
+            # --- START TIME CONSTRAINTS ---
+            # Only add ready_time constraint if patient arrives late
+            ready_time = p.get('ready_time', 0)
+            if ready_time > CONSTANTS['DAY_START']:
+                self.model.Add(start_var >= ready_time)
             
             # --- PINNING LOGIC (THE SELF-HEALING CORE) ---
             # If this is a past event (Emergency Scenario), lock it.
@@ -47,6 +53,20 @@ class EnterpriseScheduler:
                 self.model.Add(start_var == p['fixed_start'])
             elif 'min_start_time' in p:
                 self.model.Add(start_var >= p['min_start_time'])
+            
+            # --- SURGEON BREAK LOGIC (30 min mandatory break) ---
+            doc = p.get('surgeon')
+            if doc and doc in surgeon_intervals:
+                # Surgeon is blocked for: Duration + Break Time
+                break_time = CONSTANTS.get('SURGEON_BREAK', 30)
+                total_surgeon_time = dur + break_time
+                # Use a fixed end variable for better solver performance
+                doc_end = self.model.NewIntVar(CONSTANTS['DAY_START'], horizon, f'docend_{pid}')
+                self.model.Add(doc_end == start_var + total_surgeon_time)
+                surgeon_interval = self.model.NewIntervalVar(
+                    start_var, total_surgeon_time, doc_end, f'doc_{pid}'
+                )
+                surgeon_intervals[doc].append(surgeon_interval)
             
             # --- ROOM ASSIGNMENT ---
             valid_rooms = []
@@ -89,13 +109,8 @@ class EnterpriseScheduler:
                 continue
             self.model.Add(sum(valid_rooms) == 1)
 
-            # --- RESOURCE TRACKING ---
-            # Surgeon
-            doc = p.get('surgeon')
-            if doc and doc in surgeon_intervals:
-                surgeon_intervals[doc].append(master_interval)
-            
-            # Equipment (C-Arm, etc.)
+            # --- EQUIPMENT TRACKING ---
+            # Equipment (C-Arm, etc.) - uses master_interval (no break needed)
             if p.get('needs_c_arm'):
                 equipment_intervals['C-Arm'].append(master_interval)
             if p.get('needs_robot'):
@@ -136,6 +151,11 @@ class EnterpriseScheduler:
         self.model.Minimize(sum(obj_terms))
         
         # --- 4. SOLVE ---
+        # Set time limit to prevent hanging (max 30 seconds)
+        self.solver.parameters.max_time_in_seconds = 30.0
+        # Use multiple workers for faster solving on multi-core
+        self.solver.parameters.num_search_workers = 8
+        
         status = self.solver.Solve(self.model)
         
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:

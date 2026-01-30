@@ -44,5 +44,25 @@ EQUIPMENT = {
 CONSTANTS = {
     'DAY_START': 8 * 60,   # 08:00 AM (480 mins)
     'DAY_END': 20 * 60,    # 08:00 PM (1200 mins) - Allows for Overtime
-    'TURNOVER': 30         # Minutes to clean room
+    'TURNOVER': 30,        # Minutes to clean room
+    'SURGEON_BREAK': 30    # Mandatory surgeon break between consecutive surgeries
+}
+
+# 5. EMERGENCY RESERVES (VIP LANE)
+# These resources are EXCLUDED from regular scheduling
+EMERGENCY_RESERVE_ROOM = {
+    'id': 11,  # Using OR-11 (Emerg) as the dedicated emergency room
+    'name': 'OR-11 (Emerg)',
+    'type': 'General',
+    'supported': ['Neurological', 'Cardiovascular', 'Orthopedic', 'General', 'Cosmetic', 'Urology']  # Supports everything
+}
+
+# Reserve surgeons (one per specialty) - kept on-call for emergencies
+EMERGENCY_RESERVE_SURGEONS = {
+    'Neurological': 'Dr. Shepherd',  # Reserve neuro surgeon
+    'Cardiovascular': 'Dr. Burke',   # Reserve cardiac surgeon
+    'Orthopedic': 'Dr. Lincoln',     # Reserve ortho surgeon
+    'General': 'Dr. Grey',           # Reserve general surgeon
+    'Cosmetic': 'Dr. Avery',         # Reserve cosmetic surgeon
+    'Urology': 'Dr. Grey'            # Reserve urology surgeon
 }
