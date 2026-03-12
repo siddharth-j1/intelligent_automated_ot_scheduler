@@ -6,7 +6,7 @@ from simulation_manager import HospitalSystem
 from hospital_config import SURGEONS, SURGEON_COLORS
  
 # --- CONFIG ---
-st.set_page_config(page_title="Pravega AI: OR Command Center", layout="wide", page_icon="⚕")
+st.set_page_config(page_title="OR Command Center", layout="wide", page_icon="⚕")
  
 # Initialize Session State
 if 'system' not in st.session_state:
@@ -326,7 +326,7 @@ elif emergency_mode == "Duration Adjustment":
 # MAIN DASHBOARD VISUALIZATION
 # ==========================================
  
-st.title("Pravega: AI-Driven OR Command Center")
+st.title("AI-Driven OR Command Center")
 st.markdown("### From **Raw Clinical Data** to **Optimized Schedule** in Seconds.")
  
 if st.session_state['schedule'] is not None and not st.session_state['schedule'].empty:
