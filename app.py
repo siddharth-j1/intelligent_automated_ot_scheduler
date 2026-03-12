@@ -3,10 +3,10 @@ import pandas as pd
 import plotly.express as px
 import os
 from simulation_manager import HospitalSystem
-from hospital_config import SURGEONS
+from hospital_config import SURGEONS, SURGEON_COLORS
  
 # --- CONFIG ---
-st.set_page_config(page_title="Pravega AI: OR Command Center", layout="wide", page_icon="🏥")
+st.set_page_config(page_title="Pravega AI: OR Command Center", layout="wide", page_icon="⚕")
  
 # Initialize Session State
 if 'system' not in st.session_state:
@@ -25,10 +25,10 @@ ASA_SCORES = [0, 1, 2, 3] # As requested
 SURGEON_LIST = list(SURGEONS.keys()) # Dynamically get from config
  
 # --- SIDEBAR: CONTROLS ---
-st.sidebar.title("🏥 Ops Control")
+st.sidebar.title("Ops Control")
  
 # DATA SOURCE TOGGLE
-data_source = st.sidebar.radio("Select Data Source", ["Upload CSV", "Manual Entry"], index=0)
+data_source = st.sidebar.radio("Select Data Source", ["Upload CSV", "Manual Entry", "Demo File"], index=0)
  
 st.sidebar.divider()
  
@@ -42,12 +42,27 @@ if data_source == "Upload CSV":
     # --- ORIGINAL CSV UPLOAD FLOW ---
     uploaded_file = st.sidebar.file_uploader("Upload Raw Patient Manifest", type=['csv'])
     
-    if uploaded_file and st.sidebar.button("🚀 Run AI Prediction & Schedule"):
-        with st.spinner("🤖 AI analyzing Age, BMI, ASA Scores... Predicting Durations..."):
+    if uploaded_file and st.sidebar.button("Run AI Prediction & Schedule"):
+        with st.spinner("AI analyzing Age, BMI, ASA Scores... Predicting Durations..."):
             schedule = st.session_state['system'].start_day(uploaded_file)
             st.session_state['schedule'] = schedule
-        st.sidebar.success("✅ Schedule Optimized based on AI Predictions!")
+        st.sidebar.success("Schedule Optimized based on AI Predictions!")
  
+elif data_source == "Demo File":
+    # --- DEMO FILE FLOW: uses patients_today.csv bundled with the app ---
+    DEMO_FILE_PATH = os.path.join(os.path.dirname(__file__), "patients_today.csv")
+    if os.path.exists(DEMO_FILE_PATH):
+        demo_df = pd.read_csv(DEMO_FILE_PATH)
+        st.sidebar.success(f"Demo file loaded: {len(demo_df)} patients")
+        st.sidebar.dataframe(demo_df[['PatientID', 'SurgeryType', 'Surgeon']], height=160)
+        if st.sidebar.button("▶ Run Demo Schedule"):
+            with st.spinner("Running AI schedule on demo patients..."):
+                schedule = st.session_state['system'].start_day(DEMO_FILE_PATH)
+                st.session_state['schedule'] = schedule
+            st.sidebar.success("Demo schedule ready!")
+    else:
+        st.sidebar.error("patients_today.csv not found in the app directory.")
+
 elif data_source == "Manual Entry":
     # --- NEW MANUAL FORM FLOW ---
     st.sidebar.info("Enter patient details manually below.")
@@ -94,7 +109,7 @@ elif data_source == "Manual Entry":
                         'Needs_Robot': robot
                     }
                     st.session_state['manual_patients'].append(new_patient)
-                    st.toast(f"Patient {p_id} Added!", icon="✅")
+                    st.toast(f"Patient {p_id} Added!", icon="")
                 else:
                     st.error("Patient ID is required.")
  
@@ -110,7 +125,7 @@ elif data_source == "Manual Entry":
         st.sidebar.success("List cleared.")
  
     # Submit Batch
-    if st.sidebar.button("🚀 Submit & Schedule Batch"):
+    if st.sidebar.button("Submit & Schedule Batch"):
         if len(st.session_state['manual_patients']) > 0:
             # Convert list to DataFrame
             df_manual = pd.DataFrame(st.session_state['manual_patients'])
@@ -119,7 +134,7 @@ elif data_source == "Manual Entry":
             temp_filename = "temp_manual_intake.csv"
             df_manual.to_csv(temp_filename, index=False)
             
-            with st.spinner(f"🤖 Processing {len(df_manual)} Patients..."):
+            with st.spinner(f"Processing {len(df_manual)} Patients..."):
                 # Pass the temp CSV to the system
                 schedule = st.session_state['system'].start_day(temp_filename)
                 st.session_state['schedule'] = schedule
@@ -128,7 +143,7 @@ elif data_source == "Manual Entry":
             if os.path.exists(temp_filename):
                 os.remove(temp_filename)
                 
-            st.sidebar.success("✅ Manual Batch Scheduled!")
+            st.sidebar.success("Manual Batch Scheduled!")
         else:
             st.sidebar.error("No patients in list to schedule.")
  
@@ -154,38 +169,56 @@ emergency_mode = st.sidebar.radio(
 
 if emergency_mode == "Start Delay":
     # --- NEW: START DELAY HANDLING ---
-    st.sidebar.markdown("⏰ **Surgery Start Delayed**")
-    st.sidebar.caption("Use when surgeon/patient is late or equipment not ready")
+    st.sidebar.markdown("**Surgery Start Delayed**")
+    st.sidebar.caption("Use when surgeon/patient is late or OT not ready")
     
     if st.session_state['schedule'] is not None:
         patient_list = st.session_state['schedule']['Patient ID'].tolist()
+        room_list = st.session_state['schedule']['Room'].unique().tolist()
         
         if patient_list:
             delay_patient = st.sidebar.selectbox("Select Delayed Patient", patient_list, key="start_delay_patient")
             
             delay_reason = st.sidebar.selectbox(
                 "Reason for Delay",
-                ["Surgeon Running Late", "Patient Not Ready", "Equipment Issue", "Room Cleaning", "Other"],
-                key="start_delay_reason"
+                ["Surgeon Running Late", "Patient Not Ready", "OT Not Ready", "Room Cleaning", "Equipment Issue", "Other"],
+                key="start_delay_reason",
+                help="Surgeon Late → ALL their surgeries delayed\nPatient Not Ready → Only this surgery delayed\nOT Not Ready → ALL surgeries in that room delayed"
             )
             
-            new_ready_time = st.sidebar.time_input("Patient Will Be Ready At", value=None, key="start_delay_ready")
+            # Show room selector only for room-related delays
+            selected_room = None
+            if delay_reason in ["OT Not Ready", "Room Cleaning"]:
+                selected_room = st.sidebar.selectbox("Select Affected Room", room_list, key="start_delay_room")
+            
+            new_ready_time = st.sidebar.time_input("Will Be Ready At", value=None, key="start_delay_ready")
             current_time_sd = st.sidebar.time_input("Current Time", value=None, key="start_delay_current")
             
-            if st.sidebar.button("⏰ Apply Start Delay"):
+            if st.sidebar.button("Apply Start Delay"):
                 if new_ready_time is None or current_time_sd is None:
                     st.sidebar.error("Please set both Ready Time and Current Time.")
                 else:
                     ready_str = f"{new_ready_time.hour:02d}:{new_ready_time.minute:02d}"
                     current_str = f"{current_time_sd.hour:02d}:{current_time_sd.minute:02d}"
                     
-                    with st.spinner(f"⏰ {delay_patient} delayed due to {delay_reason}. Re-optimizing..."):
+                    # Different messages based on delay type
+                    if delay_reason == "Surgeon Running Late":
+                        spinner_msg = f"Surgeon delayed - blocking ALL their surgeries until {ready_str}..."
+                        success_msg = f"All surgeries for this surgeon rescheduled after {ready_str}"
+                    elif delay_reason in ["OT Not Ready", "Room Cleaning"]:
+                        spinner_msg = f"{selected_room} not ready - rescheduling all cases..."
+                        success_msg = f"All surgeries in {selected_room} rescheduled after {ready_str}"
+                    else:
+                        spinner_msg = f"Patient {delay_patient} delayed - surgeon can do other cases..."
+                        success_msg = f"{delay_patient} rescheduled. Surgeon may take other cases."
+                    
+                    with st.spinner(spinner_msg):
                         new_sched = st.session_state['system'].handle_start_delay(
-                            delay_patient, delay_reason, ready_str, current_str
+                            delay_patient, delay_reason, ready_str, current_str, room_name=selected_room
                         )
                         st.session_state['schedule'] = new_sched
                     
-                    st.sidebar.warning(f"✅ {delay_patient} rescheduled to start at {ready_str}. Downstream adjusted.")
+                    st.sidebar.warning(success_msg)
         else:
             st.sidebar.info("Schedule is empty.")
     else:
@@ -193,7 +226,7 @@ if emergency_mode == "Start Delay":
 
 elif emergency_mode == "Code Red":
     # --- NEW: EMERGENCY CODE RED FORM ---
-    st.sidebar.markdown("🚨 **Emergency Patient Direct Booking**")
+    st.sidebar.markdown("**CODE RED: Emergency Patient Direct Booking**")
     
     with st.sidebar.expander("Emergency Patient Details", expanded=True):
         with st.form("emergency_form", clear_on_submit=False):
@@ -207,7 +240,7 @@ elif emergency_mode == "Code Red":
             em_asa = st.selectbox("ASA Score", [3, 4, 5], index=0)  # Emergencies are high risk
             em_time = st.time_input("Arrival Time", value=None)
             
-            submit_emergency = st.form_submit_button("🚨 ACTIVATE CODE RED")
+            submit_emergency = st.form_submit_button("ACTIVATE CODE RED")
     
     if submit_emergency:
         if em_time is None:
@@ -227,15 +260,15 @@ elif emergency_mode == "Code Red":
                 'ASA_Score': em_asa
             }
             
-            with st.spinner("🚨 Activating Emergency Protocol..."):
+            with st.spinner("Activating Emergency Protocol..."):
                 new_schedule = st.session_state['system'].handle_code_red(emergency_patient, time_str)
                 st.session_state['schedule'] = new_schedule
             
-            st.sidebar.success(f"✅ Emergency {em_id} booked in OR-11 (Emerg) at {time_str}!")
+            st.sidebar.success(f"Emergency {em_id} booked in OR-13 (Trauma Bay) at {time_str}!")
 
 elif emergency_mode == "Duration Adjustment":
     # --- EXISTING: DELAY HANDLING ---
-    st.sidebar.markdown("⚠️ **Surgery Duration Adjustment**")
+    st.sidebar.markdown("**Surgery Duration Adjustment**")
     st.sidebar.caption("Handles both early finishes (−) and delays (+)")
     
     if st.session_state['schedule'] is not None:
@@ -257,7 +290,7 @@ elif emergency_mode == "Duration Adjustment":
             
             current_time = st.sidebar.time_input("Current Time", value=None)
             
-            if st.sidebar.button("⚡ Adjust & Re-Optimize Schedule"):
+            if st.sidebar.button("Adjust & Re-Optimize Schedule"):
                 if current_time is None:
                     st.sidebar.error("Please set the Current Time.")
                 else:
@@ -265,14 +298,14 @@ elif emergency_mode == "Duration Adjustment":
                     
                     # Dynamic messaging based on early/late
                     if delay_mins < 0:
-                        spinner_msg = f"⚡ Surgery finished {abs(delay_mins)} mins early! Re-optimizing to move up waiting patients..."
-                        success_msg = f"✅ Schedule updated! {target_p} finished {abs(delay_mins)} mins early - downstream patients moved up."
+                        spinner_msg = f"Surgery finished {abs(delay_mins)} mins early! Re-optimizing to move up waiting patients..."
+                        success_msg = f"Schedule updated! {target_p} finished {abs(delay_mins)} mins early - downstream patients moved up."
                     elif delay_mins > 0:
-                        spinner_msg = f"⚡ Surgery delayed {delay_mins} mins. Re-calculating cascade effects..."
-                        success_msg = f"⚠️ Schedule healed! {target_p} extended by {delay_mins} mins."
+                        spinner_msg = f"Surgery delayed {delay_mins} mins. Re-calculating cascade effects..."
+                        success_msg = f"Schedule healed! {target_p} extended by {delay_mins} mins."
                     else:
-                        spinner_msg = "⚡ Re-optimizing schedule..."
-                        success_msg = "✅ Schedule refreshed (no time change)."
+                        spinner_msg = "Re-optimizing schedule..."
+                        success_msg = "Schedule refreshed (no time change)."
                     
                     with st.spinner(spinner_msg):
                         new_sched = st.session_state['system'].handle_emergency(target_p, delay_mins, time_str)
@@ -293,7 +326,7 @@ elif emergency_mode == "Duration Adjustment":
 # MAIN DASHBOARD VISUALIZATION
 # ==========================================
  
-st.title("🏥 Pravega: AI-Driven OR Command Center")
+st.title("Pravega: AI-Driven OR Command Center")
 st.markdown("### From **Raw Clinical Data** to **Optimized Schedule** in Seconds.")
  
 if st.session_state['schedule'] is not None and not st.session_state['schedule'].empty:
@@ -312,11 +345,32 @@ if st.session_state['schedule'] is not None and not st.session_state['schedule']
     
     # Convert for Plotly
     if 'Start Time' in df.columns and 'End Time' in df.columns:
-        df['Start'] = pd.to_datetime('2024-01-01 ' + df['Start Time'])
-        df['Finish'] = pd.to_datetime('2024-01-01 ' + df['End Time'])
+        # Hide OR-13 (Trauma Bay) if no Code Red cases added
+        trauma_cases = df[df['Room'] == 'OR-13 (Trauma Bay)']
+        if trauma_cases.empty:
+            df_display = df[df['Room'] != 'OR-13 (Trauma Bay)'].copy()
+        else:
+            df_display = df.copy()
+        
+        df_display['Start'] = pd.to_datetime('2024-01-01 ' + df_display['Start Time'])
+        df_display['Finish'] = pd.to_datetime('2024-01-01 ' + df_display['End Time'])
+        
+        # Define fixed room order (OR-1 to OR-13)
+        room_order = [
+            'OR-1 (Neuro)', 'OR-2 (Neuro)', 
+            'OR-3 (Cardio)', 'OR-4 (Cardio)',
+            'OR-5 (General)', 'OR-6 (General)', 
+            'OR-7 (Ortho)', 'OR-8 (Ortho)',
+            'OR-9 (Hybrid)', 'OR-10 (Robot)', 
+            'OR-11 (General)', 'OR-12 (Cosmetic)',
+            'OR-13 (Trauma Bay)'  # Emergency only
+        ]
+        # Only include rooms that have surgeries scheduled
+        active_rooms = df_display['Room'].unique().tolist()
+        sorted_rooms = [r for r in room_order if r in active_rooms]
         
         fig = px.timeline(
-            df,
+            df_display,
             x_start="Start",
             x_end="Finish",
             y="Room",
@@ -324,16 +378,18 @@ if st.session_state['schedule'] is not None and not st.session_state['schedule']
             text="Patient ID",
             hover_data=["Type", "Duration", "Risk (ASA)"],
             height=600,
-            color_discrete_sequence=px.colors.qualitative.Pastel
+            color_discrete_map=SURGEON_COLORS,  # Fixed colors per surgeon
+            category_orders={"Room": sorted_rooms}  # Fixed order
         )
-        fig.update_yaxes(categoryorder="category ascending")
+        # Display order: OR-1 at top, OR-12 at bottom
+        fig.update_yaxes(categoryorder="array", categoryarray=sorted_rooms[::-1])
         fig.layout.xaxis.type = 'date'
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.error("Schedule data missing time columns.")
  
     # DATA TABLE
-    with st.expander("📂 View AI Predictions & Assignments"):
+    with st.expander("View AI Predictions & Assignments"):
         st.dataframe(df)
  
 else:

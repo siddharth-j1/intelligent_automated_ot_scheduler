@@ -23,7 +23,7 @@ class EnterpriseScheduler:
         room_vars = {}      # To track assignments
         
         # Maps for Resource Constraints
-        surgeon_intervals = {doc: [] for doc in self.surgeons}
+        surgeon_intervals = {}  # Will be populated as we encounter surgeons
         equipment_intervals = {eq: [] for eq in self.equipment_caps}
         
         # --- 1. SETUP VARIABLES ---
@@ -56,7 +56,11 @@ class EnterpriseScheduler:
             
             # --- SURGEON BREAK LOGIC (30 min mandatory break) ---
             doc = p.get('surgeon')
-            if doc and doc in surgeon_intervals:
+            if doc:
+                # Initialize surgeon entry if not exists
+                if doc not in surgeon_intervals:
+                    surgeon_intervals[doc] = []
+                    
                 # Surgeon is blocked for: Duration + Break Time
                 break_time = CONSTANTS.get('SURGEON_BREAK', 30)
                 total_surgeon_time = dur + break_time
@@ -77,6 +81,12 @@ class EnterpriseScheduler:
                 # Check Capability
                 if p['type'] not in r['supported']:
                     continue # Skip incompatible rooms
+                
+                # Check if room is unavailable for this patient
+                room_unavailable_until = p.get('room_unavailable', {}).get(r['name'], 0)
+                if room_unavailable_until > 0:
+                    # Room is blocked for this patient - ensure start time is after room becomes available
+                    self.model.Add(start_var >= room_unavailable_until)
                 
                 # Create Boolean: Is Patient P in Room R?
                 x_pr = self.model.NewBoolVar(f'{pid}_in_{rid}')
@@ -122,9 +132,9 @@ class EnterpriseScheduler:
         for rid, intervals in room_intervals.items():
             self.model.AddNoOverlap(intervals)
             
-        # B. Surgeon Non-Overlap
+        # B. Surgeon Non-Overlap (with break time included in intervals)
         for doc, intervals in surgeon_intervals.items():
-            if len(intervals) > 1:
+            if len(intervals) > 0:
                 self.model.AddNoOverlap(intervals)
                 
         # C. Equipment Capacity (Cumulative)

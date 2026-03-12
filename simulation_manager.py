@@ -6,21 +6,20 @@ from hospital_config import ROOMS, SURGEONS, EQUIPMENT, EMERGENCY_RESERVE_ROOM, 
 
 class HospitalSystem:
     def __init__(self):
-        # Filter out emergency reserves from regular scheduling
+        # Filter out OR-11 (Trauma Bay) from regular scheduling - kept empty for emergencies
         self.regular_rooms = [r for r in ROOMS if r['id'] != EMERGENCY_RESERVE_ROOM['id']]
         self.regular_surgeons = {k: v for k, v in SURGEONS.items() if k not in EMERGENCY_RESERVE_SURGEONS.values()}
         
         self.scheduler = EnterpriseScheduler(self.regular_rooms, self.regular_surgeons, EQUIPMENT)
         self.current_schedule = None
-        self.active_patients = [] # Stores full dicts
-        
+        self.active_patients = [] # Stores full dicts        self.room_unavailable = {}  # Track room delays: {room_name: ready_time_mins}        
         # Load AI Model
         try:
             self.artifacts = joblib.load("surgery_model_artifacts.pkl")
             self.model = self.artifacts['model']
-            print("✅ AI Model Loaded Successfully")
+            print("AI Model Loaded Successfully")
         except:
-            print("⚠️ Model not found. Using fallback durations.")
+            print("WARNING: Model not found. Using fallback durations.")
             self.model = None
 
     def predict_duration(self, patient_row):
@@ -76,7 +75,7 @@ class HospitalSystem:
 
     def handle_emergency(self, patient_id, added_delay, current_time_hhmm):
         """Re-optimizes schedule while pinning past events"""
-        print(f"🚨 Handling Delay: {patient_id} +{added_delay} mins")
+        print(f"ALERT: Handling Delay: {patient_id} +{added_delay} mins")
         
         # Convert HH:MM to minutes
         h, m = map(int, current_time_hhmm.split(':'))
@@ -111,16 +110,17 @@ class HospitalSystem:
         self.current_schedule = self.scheduler.solve(self.active_patients)
         return self.current_schedule
 
-    def handle_start_delay(self, patient_id, delay_reason, new_ready_time_str, current_time_str):
+    def handle_start_delay(self, patient_id, delay_reason, new_ready_time_str, current_time_str, room_name=None):
         """
-        Handles situations where a surgery cannot start on time due to:
-        - Surgeon running late
-        - Patient not ready (labs, consent, etc.)
-        - Equipment/room delay
+        Handles situations where a surgery cannot start on time.
         
-        Sets a 'ready_time' for the patient so solver won't schedule before that.
+        LOGIC BY DELAY REASON:
+        - Surgeon Running Late → ALL surgeries of that surgeon delayed (surgeon unavailable)
+        - Patient Not Ready → Only THIS patient delayed (surgeon can do others)
+        - Room Cleaning / OT Not Ready → ALL surgeries in that room delayed
+        - Equipment Issue → Only THIS patient delayed
         """
-        print(f"⏰ Start Delay: {patient_id} cannot start until {new_ready_time_str} (Reason: {delay_reason})")
+        print(f"Start Delay: {patient_id} - Reason: {delay_reason} - Ready at: {new_ready_time_str}")
         
         # Convert times to minutes
         h, m = map(int, current_time_str.split(':'))
@@ -129,11 +129,50 @@ class HospitalSystem:
         rh, rm = map(int, new_ready_time_str.split(':'))
         ready_mins = rh * 60 + rm
         
-        # Find the target patient
+        # Find the target patient to get their surgeon
         target_p = next((p for p in self.active_patients if p['id'] == patient_id), None)
-        if target_p:
-            # Set ready_time - solver will ensure start >= ready_time
-            target_p['ready_time'] = ready_mins
+        if not target_p:
+            print(f"WARNING: Patient {patient_id} not found in active patients")
+            return self.current_schedule
+        
+        target_surgeon = target_p.get('surgeon')
+        
+        # LOGIC: Apply delay based on reason
+        if delay_reason == "Surgeon Running Late":
+            # SURGEON DELAY: All surgeries of this surgeon must wait
+            print(f"Surgeon {target_surgeon} delayed - blocking ALL their surgeries until {new_ready_time_str}")
+            for p in self.active_patients:
+                if p.get('surgeon') == target_surgeon:
+                    # Set ready_time for ALL patients of this surgeon (take MAX to preserve stricter constraints)
+                    existing_ready = p.get('ready_time', 0)
+                    p['ready_time'] = max(existing_ready, ready_mins)
+                    
+        elif delay_reason in ["Room Cleaning", "OT Not Ready"]:
+            # ROOM DELAY: Mark room as unavailable until ready_time
+            if room_name:
+                print(f"Room {room_name} not ready - blocking ALL surgeries in this room until {new_ready_time_str}")
+                # Track room unavailability (initialize if not exists for backwards compatibility)
+                if not hasattr(self, 'room_unavailable'):
+                    self.room_unavailable = {}
+                self.room_unavailable[room_name] = ready_mins
+                
+                # Update ALL patients to avoid this room until ready time
+                for p in self.active_patients:
+                    # Store room constraint on patient
+                    if 'room_unavailable' not in p:
+                        p['room_unavailable'] = {}
+                    p['room_unavailable'][room_name] = ready_mins
+            else:
+                # Fallback: just delay this patient
+                existing_ready = target_p.get('ready_time', 0)
+                target_p['ready_time'] = max(existing_ready, ready_mins)
+                    
+        else:
+            # PATIENT DELAY (Patient Not Ready, Equipment Issue, Other): Only this patient
+            # Surgeon is FREE to do other surgeries
+            print(f"Patient {patient_id} delayed - surgeon {target_surgeon} can do other cases")
+            existing_ready = target_p.get('ready_time', 0)
+            target_p['ready_time'] = max(existing_ready, ready_mins)
         
         # Pin past surgeries and set min_start_time for future ones
         if self.current_schedule is not None:
@@ -152,7 +191,7 @@ class HospitalSystem:
                     # Future surgery - free to move
                     p.pop('fixed_start', None)
                     p.pop('fixed_room', None)
-                    # Only set min_start_time if not already set to a later time by ready_time
+                    # Set min_start_time only if no ready_time or ready_time is earlier
                     if 'ready_time' not in p or p.get('ready_time', 0) < current_mins:
                         p['min_start_time'] = current_mins
         
@@ -169,7 +208,7 @@ class HospitalSystem:
                         'AnesthesiaType', 'Has_Comorbidity', 'ASA_Score'
         current_time_str: string like "10:30"
         """
-        print(f"🚨 CODE RED: Emergency case {patient_details['id']} - Direct booking initiated")
+        print(f"CODE RED: Emergency case {patient_details['id']} - Direct booking initiated")
         
         # 1. Convert Current Time to Minutes (e.g., "10:30" -> 630)
         h, m = map(int, current_time_str.split(':'))
@@ -208,5 +247,5 @@ class HospitalSystem:
         # Sort by start time for proper visualization
         self.current_schedule = self.current_schedule.sort_values('start_mins').reset_index(drop=True)
         
-        print(f"✅ Emergency booked: {patient_details['id']} in {EMERGENCY_RESERVE_ROOM['name']} at {current_time_str}")
+        print(f"Emergency booked: {patient_details['id']} in {EMERGENCY_RESERVE_ROOM['name']} at {current_time_str}")
         return self.current_schedule

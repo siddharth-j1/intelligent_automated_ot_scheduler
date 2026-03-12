@@ -16,8 +16,9 @@ ROOMS = [
     {'id': 8, 'name': 'OR-8 (Ortho)', 'type': 'General', 'supported': ['Orthopedic', 'General']},
     {'id': 9, 'name': 'OR-9 (Hybrid)', 'type': 'General', 'supported': ['General', 'Urology', 'Cosmetic']},
     {'id': 10, 'name': 'OR-10 (Robot)', 'type': 'General', 'supported': ['General', 'Urology']}, # Has Robot
-    {'id': 11, 'name': 'OR-11 (Emerg)', 'type': 'General', 'supported': ['General', 'Orthopedic', 'Cardiovascular']},
-    {'id': 12, 'name': 'OR-12 (Day)', 'type': 'General', 'supported': ['Cosmetic', 'General']}
+    {'id': 11, 'name': 'OR-11 (General)', 'type': 'General', 'supported': ['General', 'Orthopedic', 'Cardiovascular']},
+    {'id': 12, 'name': 'OR-12 (Cosmetic)', 'type': 'General', 'supported': ['Cosmetic', 'General']},
+    {'id': 13, 'name': 'OR-13 (Trauma Bay)', 'type': 'Emergency', 'supported': ['Neurological', 'Cardiovascular', 'Orthopedic', 'General', 'Cosmetic', 'Urology']}  # Emergency only
 ]
 
 # 2. SURGEONS & SPECIALTIES
@@ -48,12 +49,12 @@ CONSTANTS = {
     'SURGEON_BREAK': 30    # Mandatory surgeon break between consecutive surgeries
 }
 
-# 5. EMERGENCY RESERVES (VIP LANE)
-# These resources are EXCLUDED from regular scheduling
+# 5. TRAUMA BAY (For Code Red Emergencies ONLY)
+# This resource is EXCLUDED from regular scheduling
 EMERGENCY_RESERVE_ROOM = {
-    'id': 11,  # Using OR-11 (Emerg) as the dedicated emergency room
-    'name': 'OR-11 (Emerg)',
-    'type': 'General',
+    'id': 13,  # Using OR-13 (Trauma Bay) - dedicated for Code Red only
+    'name': 'OR-13 (Trauma Bay)',
+    'type': 'Emergency',
     'supported': ['Neurological', 'Cardiovascular', 'Orthopedic', 'General', 'Cosmetic', 'Urology']  # Supports everything
 }
 
@@ -67,22 +68,16 @@ EMERGENCY_RESERVE_SURGEONS = {
     'Urology': 'Dr. Grey'            # Reserve urology surgeon
 }
 
-# hospital_config.py
-
-# ... existing code ...
-
-# --- EMERGENCY RESERVES ---
-# These resources are EXCLUDED from the morning schedule
-EMERGENCY_RESERVE_ROOM = {
-    'id': 999, 
-    'name': 'Trauma-Bay-1', 
-    'supported': ['Cardiology', 'Neurology', 'Orthopedics', 'General'] # Supports everything
-}
-
-# One doctor per specialty who is "On Call" waiting for emergencies
-EMERGENCY_RESERVE_SURGEONS = {
-    'Cardiology': 'Dr. Reserve (Cardio)',
-    'Neurology': 'Dr. Reserve (Neuro)',
-    'Orthopedics': 'Dr. Reserve (Ortho)',
-    'General': 'Dr. Reserve (Gen)',
+# 6. FIXED SURGEON COLORS (Consistent across re-optimization)
+SURGEON_COLORS = {
+    'Dr. Strange': '#E8B4F0',      # Light Purple
+    'Dr. Shepherd': '#D4A5D4',     # Lavender
+    'Dr. Yang': '#FFB3BA',         # Light Pink
+    'Dr. Burke': '#FFDFBA',        # Peach
+    'Dr. House': '#FFFFBA',        # Light Yellow
+    'Dr. Grey': '#BAFFC9',         # Mint Green
+    'Dr. Torres': '#BAE1FF',       # Light Blue
+    'Dr. Lincoln': '#C9C9FF',      # Periwinkle
+    'Dr. Avery': '#FFD6A5',        # Apricot
+    'Dr. Bailey': '#CAFFBF'        # Pale Green
 }
