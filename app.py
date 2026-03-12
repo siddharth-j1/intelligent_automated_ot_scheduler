@@ -396,7 +396,7 @@ else:
     if data_source == "Upload CSV":
         st.info("👈 Please Upload 'raw_patients.csv' to begin.")
     else:
-        st.info("👈 Please Add Patients via the Manual Entry Form to begin.")
+        st.info("👈 Please Add Patients via the Manual Entry/Demo File Form to begin.")
         
     st.markdown("""
     **How it works:**
